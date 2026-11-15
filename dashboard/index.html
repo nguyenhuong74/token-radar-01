@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Radar — pre-token protocols ranked by implied value</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="hero">
+  <div class="sweep" aria-hidden="true"><span></span></div>
+  <div class="hero-text">
+    <p class="kicker">Token launch radar &middot; DefiLlama snapshot, sealed <span id="as-of">—</span></p>
+    <h1>What would the token be worth?</h1>
+    <p class="lede">Every protocol below records no token yet. Each is priced from the market itself:
+      the median market-cap/TVL ratio of live-token protocols in its own category, adjusted for
+      seven-day growth, age and chain breadth. The board does not predict whether or when a token
+      issues — it prices the record as it stands, and shows how to farm each protocol before and
+      after a launch.</p>
+  </div>
+  <dl class="stats" id="stats"></dl>
+</header>
+
+<main>
+  <section class="panel model" id="model-panel">
+    <h2>How the value is priced</h2>
+    <p class="formula">implied value = TVL &times; category comp &times; growth &times; maturity &times; breadth</p>
+    <ul class="factors">
+      <li><strong>Category comp</strong> — the category's median mcap/TVL, shrunk toward the market median
+        <span id="market-median">—</span> with a pseudo-count of 3, so a thin category leans on the market and a deep one stands on its own; clamped 0.05–1.50.</li>
+      <li><strong>Growth</strong> — 1 + 0.6 &times; 7-day TVL change, clamped −50% to +100%.</li>
+      <li><strong>Maturity</strong> — 0.70 + 0.30 &times; age up to 3 years; a protocol that ran longer with no token prices higher.</li>
+      <li><strong>Breadth</strong> — +3% per extra chain, up to +12%.</li>
+    </ul>
+    <details>
+      <summary>Category comps used (<span id="comp-count">—</span> categories)</summary>
+      <table class="comps" id="comps-table">
+        <thead><tr><th>Category</th><th>Live comps</th><th>Median mcap/TVL</th><th>Multiple used</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </details>
+  </section>
+
+  <section class="panel">
+    <div class="board-head">
+      <h2>The board <span class="count" id="row-count"></span></h2>
+      <p class="hint">Click any row for its model breakdown and six-step farm plan. Rows marked W are on the $50M watchlist.</p>
+    </div>
+    <form class="controls" id="controls">
+      <label>Search <input type="search" id="q" placeholder="Name or slug…" autocomplete="off"></label>
+      <label>Category <select id="category"><option value="">All categories</option></select></label>
+      <label>Chain <select id="chain"><option value="">All chains</option></select></label>
+      <label>Sort by <select id="sort">
+        <option value="implied">Implied value ↓</option>
+        <option value="tvl">TVL ↓</option>
+        <option value="growth">7-day growth ↓</option>
+        <option value="age">Age ↓</option>
+        <option value="name">Name A–Z</option>
+      </select></label>
+      <label class="check"><input type="checkbox" id="watchlist-only"> Watchlist only</label>
+      <button type="button" id="reset">Reset</button>
+    </form>
+    <div class="table-wrap">
+      <table class="board" id="board">
+        <thead><tr>
+          <th data-sort="rank">#</th><th data-sort="name">Protocol</th><th data-sort="category">Category</th>
+          <th data-sort="tvl">TVL</th><th data-sort="growth">7d</th><th data-sort="age">Age</th>
+          <th data-sort="comp">Comp &times;</th><th data-sort="implied">Implied value</th><th>Farm</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p class="empty" id="empty" hidden>No protocol matches these filters. Loosen the search or reset the filters.</p>
+  </section>
+
+  <section class="panel">
+    <h2>Live-token comps — the market the model is priced from</h2>
+    <p class="hint">These protocols already trade, so they are never ranked. Their market-cap/TVL ratios
+      are the comps; the board above prices pre-token protocols against them.</p>
+    <div class="table-wrap">
+      <table class="live" id="live">
+        <thead><tr><th>Protocol</th><th>Category</th><th>TVL</th><th>Market cap</th><th>Mcap / TVL</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    <p>Data: DefiLlama snapshot as of <span id="as-of-2">—</span>, sealed — the same bytes every run.
+      “Records no token” means DefiLlama's record carries no market cap, CoinGecko id or symbol; it is not proof a token does not exist.
+      Implied values are this entry's own model, never a prediction of a launch or a price. Model: <span id="model-version">—</span>.</p>
+  </footer>
+</main>
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
