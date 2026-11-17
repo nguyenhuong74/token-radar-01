@@ -1,209 +1,278 @@
-/* Token Radar dashboard: renders window.RADAR (written by main.ts) with no network.
-   Board, detail view and filters all run from the same rows board.json carries, so the
-   page, the screenshots and the board agree. */
+// Token Radar v2 — renders window.RADAR (written by main.ts) with no fetch and no network.
+//
+// The board's rows are built once and then only moved or hidden: sorting reorders the
+// existing <tr> elements (focus and state inside rows survive), filtering hides rows
+// with the hidden attribute. Column headers are real <button>s inside <th scope="col">,
+// the sorted column carries aria-sort on its <th>, and one role="status" element
+// announces each sort and filter change. The detail view is a native <dialog>.
+
 (function () {
   'use strict';
-  var D = window.RADAR;
-  if (!D) { document.body.innerHTML = '<p style="padding:2em">No radar data loaded.</p>'; return; }
+  const R = window.RADAR;
+  if (!R) return;
 
-  /* ---------- formatting ---------- */
-  function money(n) {
-    if (n === null || n === undefined) return '—';
+  const $ = (id) => document.getElementById(id);
+  const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+  /** Escape text the snapshot supplied before it enters the page. */
+  function esc(text) {
+    return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  /** $1.2B / $45.6M / $12,300, for table cells. */
+  function compact(n) {
     if (n >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
     if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
     if (n >= 1e3) return '$' + (n / 1e3).toFixed(1) + 'K';
-    return '$' + Math.round(n);
+    return '$' + Math.round(n).toLocaleString('en-US');
   }
+
+  /** Full dollars with commas, for the detail view. */
+  function money(n) {
+    return '$' + Math.round(n).toLocaleString('en-US');
+  }
+
   function pct(n) {
     if (n === null || n === undefined) return '—';
-    return (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+    return (n > 0 ? '+' : '') + n.toFixed(1) + '%';
   }
-  function ageLabel(days) {
-    if (days === null || days === undefined) return 'unknown';
-    if (days < 30) return days + 'd';
-    if (days < 365) return Math.floor(days / 30) + 'mo';
+
+  function ageText(days) {
+    if (days === null || days === undefined) return '—';
+    if (days < 365) return days + 'd';
     return (days / 365).toFixed(1) + 'y';
   }
-  function esc(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
-  function $(id) { return document.getElementById(id); }
 
-  /* ---------- header ---------- */
-  $('as-of').textContent = D.as_of;
-  $('as-of-2').textContent = D.as_of;
-  $('model-version').textContent = D.model_version;
-  $('market-median').textContent = D.market_median_mcap_tvl.toFixed(3) + '× (' + D.market_comp_sample + ' live comps)';
-  $('comp-count').textContent = D.comps.length;
-  var topValue = D.rows.length ? D.rows[0].implied_value_usd : 0;
-  var totalTvl = D.rows.reduce(function (s, r) { return s + r.tvl_usd; }, 0);
-  $('stats').innerHTML =
-    stat('Board rows', D.board_size) + stat('Watchlist ($50M+)', D.watchlist_size) +
-    stat('Early finds', D.early_size) + stat('Top implied value', money(topValue)) +
-    stat('Board TVL', money(totalTvl)) + stat('Live comps', D.live_size);
-  function stat(label, value) {
-    return '<div><dt>' + esc(label) + '</dt><dd>' + esc(value) + '</dd></div>';
-  }
+  /* ---- hero stats ---- */
 
-  /* ---------- category comps table ---------- */
-  $('comps-table').querySelector('tbody').innerHTML = D.comps.map(function (c) {
-    return '<tr><td>' + esc(c.category) + '</td><td class="num">' + c.sample +
-      '</td><td class="num">' + c.median_mcap_tvl.toFixed(3) + '×</td><td class="num">' +
-      c.multiple_used.toFixed(3) + '×</td></tr>';
-  }).join('');
-
-  /* ---------- live comps table ---------- */
-  $('live').querySelector('tbody').innerHTML = D.live.map(function (p) {
-    return '<tr><td>' + esc(p.name) + '<div class="tag">' + esc(p.slug) + '</div></td><td>' +
-      esc(p.category || '—') + '</td><td class="num">' + money(p.tvl_usd) + '</td><td class="num">' +
-      money(p.mcap_usd) + '</td><td class="num">' + p.mcap_tvl.toFixed(3) + '×</td></tr>';
-  }).join('');
-
-  /* ---------- filters ---------- */
-  var state = { q: '', category: '', chain: '', watchlist: false, sort: 'implied', open: null };
-  var categories = [];
-  var chains = [];
-  D.rows.forEach(function (r) {
-    if (r.category && categories.indexOf(r.category) < 0) categories.push(r.category);
-    r.chains.forEach(function (c) { if (chains.indexOf(c) < 0) chains.push(c); });
-  });
-  categories.sort();
-  chains.sort();
-  fillSelect($('category'), categories);
-  fillSelect($('chain'), chains);
-  function fillSelect(sel, values) {
-    values.forEach(function (v) {
-      var o = document.createElement('option');
-      o.value = v; o.textContent = v;
-      sel.appendChild(o);
-    });
-  }
-
-  var SORTS = {
-    rank: function (a, b) { return a.rank - b.rank; },
-    implied: function (a, b) { return b.implied_value_usd - a.implied_value_usd; },
-    tvl: function (a, b) { return b.tvl_usd - a.tvl_usd; },
-    growth: function (a, b) { return (b.change_7d === null ? -1e9 : b.change_7d) - (a.change_7d === null ? -1e9 : a.change_7d); },
-    age: function (a, b) { return (b.age_days === null ? -1 : b.age_days) - (a.age_days === null ? -1 : a.age_days); },
-    name: function (a, b) { return a.name < b.name ? -1 : 1; },
-    category: function (a, b) { return (a.category || '') < (b.category || '') ? -1 : 1; },
-    comp: function (a, b) { return b.model.comp_multiple - a.model.comp_multiple; }
+  $('as-of').textContent = R.as_of;
+  $('as-of-2').textContent = R.as_of;
+  $('model-version').textContent = R.model_version;
+  $('cv-comps').textContent = R.validation.comp_count;
+  const winner = R.validation.winner;
+  const loglog = 'log10(market cap) = ' + R.fit.alpha + ' + ' + R.fit.beta + ' × log10(TVL), fitted on ' +
+    R.validation.comp_count + ' traded tokens';
+  const formulas = {
+    'pooled log-log': 'implied value = 10^(' + R.fit.alpha + ' + ' + R.fit.beta + ' × log10(TVL)) × growth × maturity × breadth',
+    'log-log + category offset': 'implied value = 10^(' + R.fit.alpha + ' + ' + R.fit.beta + ' × log10(TVL) + category offset) × growth × maturity × breadth',
+    'log-log mean of pooled & offset': 'implied value = √(pooled line × offset line) × growth × maturity × breadth',
+    'market-median ratio': 'implied value = TVL × market-median mcap/TVL × growth × maturity × breadth',
+    'category-median ratio': 'implied value = TVL × category-median mcap/TVL (shrunk to market) × growth × maturity × breadth',
   };
+  $('formula').textContent = formulas[winner] || formulas['pooled log-log'];
+  $('fit-line').textContent =
+    'The blind test\'s winner is "' + winner + '": ' +
+    (winner.indexOf('log-log') >= 0 ? loglog : 'median market-cap/TVL ratios over ' + R.validation.comp_count + ' traded tokens') +
+    '. It priced held-out tokens at a median error of ×' + R.validation.winner_median_error_x +
+    ' (' + R.validation.winner_within_2x_pct + '% within 2×).';
 
-  function filtered() {
-    var q = state.q.trim().toLowerCase();
-    var rows = D.rows.filter(function (r) {
-      if (state.watchlist && !r.on_watchlist) return false;
-      if (state.category && r.category !== state.category) return false;
-      if (state.chain && r.chains.indexOf(state.chain) < 0) return false;
-      if (q && r.name.toLowerCase().indexOf(q) < 0 && r.slug.toLowerCase().indexOf(q) < 0) return false;
-      return true;
+  const v = R.verdict_counts;
+  $('stats').innerHTML =
+    '<div><dt>Board rows</dt><dd>' + R.board_size + '</dd></div>' +
+    '<div><dt>Watchlist covered</dt><dd>' + R.watchlist_size + ' / ' + R.watchlist_size + '</dd></div>' +
+    '<div><dt>Early finds</dt><dd>' + R.early_size + ' <small>below the $50M floor</small></dd></div>' +
+    '<div><dt>Blind-test error</dt><dd>×' + R.validation.winner_median_error_x + ' <small>median, held out</small></dd></div>' +
+    '<div><dt>Farms that pay</dt><dd>' + v.FARM + ' <small>FARM · ' + v.THIN + ' THIN · ' + v.SKIP + ' SKIP</small></dd></div>';
+
+  /* ---- blind-test table ---- */
+
+  $('cv-table').querySelector('tbody').innerHTML = R.validation.candidates.map((c) => {
+    const winner = c.name === R.validation.winner;
+    return '<tr' + (winner ? ' class="winner"' : '') + '><td>' + esc(c.name) + '</td><td class="num">×' + c.median_error_x.toFixed(2) +
+      '</td><td class="num">' + c.within_2x_pct.toFixed(1) + '%</td><td>' + (winner ? '★ Used for the board' : '—') + '</td></tr>';
+  }).join('');
+
+  /* ---- category offsets ---- */
+
+  $('comp-count').textContent = R.comps.length;
+  $('comps-table').querySelector('tbody').innerHTML = R.comps.map((c) =>
+    '<tr><td>' + esc(c.category) + '</td><td class="num">' + c.sample + '</td><td class="num">' +
+    (c.offset_dex > 0 ? '+' : '') + c.offset_dex.toFixed(3) + '</td><td class="num">' + c.median_mcap_tvl.toFixed(3) + '</td></tr>',
+  ).join('');
+
+  /* ---- live comps ---- */
+
+  $('live').querySelector('tbody').innerHTML = R.live.map((p) =>
+    '<tr><td>' + esc(p.name) + '</td><td>' + esc(p.category || '—') + '</td><td class="num">' + compact(p.tvl_usd) +
+    '</td><td class="num">' + compact(p.mcap_usd) + '</td><td class="num">' + p.mcap_tvl.toFixed(3) + '</td></tr>',
+  ).join('');
+
+  /* ---- the board: rows built once, then moved or hidden ---- */
+
+  const tbody = $('board').querySelector('tbody');
+  const bySlug = new Map(R.rows.map((r) => [r.slug, r]));
+
+  function rowHtml(r) {
+    const change = r.change_7d === null ? '—' : pct(r.change_7d);
+    const changeClass = r.change_7d === null ? '' : r.change_7d >= 0 ? 'pos' : 'neg';
+    const net = r.farm.net_usd;
+    const netClass = net >= 25 ? 'pos' : net >= 0 ? '' : 'neg';
+    return '<tr data-slug="' + esc(r.slug) + '">' +
+      '<td class="num" data-value="' + r.rank + '" data-label="#">' + r.rank + (r.on_watchlist ? ' <span class="watch" title="On the $50M watchlist">W</span>' : '') + '</td>' +
+      '<td data-value="' + esc(r.name.toLowerCase()) + '" data-label="Protocol"><button type="button" class="name-btn" data-detail="' + esc(r.slug) + '">' + esc(r.name) + '</button></td>' +
+      '<td data-value="' + esc((r.category || '').toLowerCase()) + '" data-label="Category">' + esc(r.category || '—') + '</td>' +
+      '<td class="num" data-value="' + r.tvl_usd + '" data-label="TVL">' + compact(r.tvl_usd) + '</td>' +
+      '<td class="num ' + changeClass + '" data-value="' + (r.change_7d === null ? -1e9 : r.change_7d) + '" data-label="7d">' + change + '</td>' +
+      '<td class="num" data-value="' + r.implied_value_usd + '" data-label="Implied value"><strong>' + compact(r.implied_value_usd) + '</strong></td>' +
+      '<td class="num" data-label="Rank range">' + r.rank_lo + '–' + r.rank_hi + '</td>' +
+      '<td class="num" data-value="' + net + '" data-label="Net / verdict"><span class="' + netClass + '">' +
+      (net < 0 ? '−' : '') + money(Math.abs(net)) + '</span> <span class="badge ' + r.farm.verdict + '">' + r.farm.verdict + '</span></td>' +
+      '</tr>';
+  }
+
+  tbody.innerHTML = R.rows.map(rowHtml).join('');
+
+  const table = $('board');
+  const status = $('status');
+  const empty = $('empty');
+  const rowCount = $('row-count');
+  const sortSelect = $('sort');
+
+  const KEY_INDEX = { rank: 0, name: 1, category: 2, tvl: 3, growth: 4, implied: 5, net: 7 };
+
+  /** Reorder the existing rows by a column key and direction; never rebuilds the tbody. */
+  function sortBy(key, direction) {
+    const index = KEY_INDEX[key];
+    const type = key === 'name' || key === 'category' ? 'text' : 'number';
+    const factor = direction === 'ascending' ? 1 : -1;
+    const rows = [...tbody.rows];
+    const value = (row) => row.cells[index].dataset.value;
+    rows.sort((a, b) => factor * (type === 'number' ? Number(value(a)) - Number(value(b)) : collator.compare(value(a), value(b))));
+    for (const row of rows) tbody.appendChild(row);
+    for (const th of table.tHead.rows[0].cells) th.removeAttribute('aria-sort');
+    const th = table.tHead.rows[0].cells[index];
+    if (th) th.setAttribute('aria-sort', direction);
+    status.textContent = 'Sorted by ' + key + ', ' + direction + ', ' + rows.length + ' rows';
+  }
+
+  table.querySelectorAll('thead th button').forEach((button) => {
+    button.addEventListener('click', () => {
+      const th = button.closest('th');
+      const key = th.dataset.key;
+      const next = th.getAttribute('aria-sort') === 'ascending' ? 'descending' : 'ascending';
+      sortBy(key, next);
+      if (key === 'implied' || key === 'net' || key === 'tvl' || key === 'growth') sortSelect.value = key;
     });
-    rows.sort(SORTS[state.sort] || SORTS.implied);
-    return rows;
-  }
+  });
 
-  /* ---------- board ---------- */
-  var tbody = $('board').querySelector('tbody');
-  function render() {
-    var rows = filtered();
-    $('row-count').textContent = '— ' + rows.length + ' of ' + D.board_size + ' protocols';
-    $('empty').hidden = rows.length > 0;
-    var html = '';
-    rows.forEach(function (r) {
-      var g = r.change_7d;
-      var gClass = g === null ? '' : (g >= 0 ? 'up' : 'down');
-      var open = state.open === r.slug;
-      html += '<tr class="row' + (open ? ' open' : '') + '" data-slug="' + esc(r.slug) + '">' +
-        '<td class="num">' + r.rank + '</td>' +
-        '<td><strong>' + esc(r.name) + '</strong>' + (r.on_watchlist ? '<span class="badge">W</span>' : '') +
-        '<div class="tag">' + esc(r.slug) + '</div></td>' +
-        '<td>' + esc(r.category || '—') + '</td>' +
-        '<td class="num">' + money(r.tvl_usd) + '</td>' +
-        '<td class="num ' + gClass + '">' + pct(g) + '</td>' +
-        '<td class="num">' + ageLabel(r.age_days) + '</td>' +
-        '<td class="num">' + r.model.comp_multiple.toFixed(2) + '×</td>' +
-        '<td class="num"><strong>' + money(r.implied_value_usd) + '</strong></td>' +
-        '<td class="farm-cell">' + esc(firstAction(r)) + '</td></tr>';
-      if (open) html += detailRow(r);
-    });
-    tbody.innerHTML = html;
-    markSorted();
-  }
-
-  /* The farm plan's core action, shortened for the row: the step the farmer starts with. */
-  function firstAction(r) {
-    var s = r.farm_steps[1] || r.farm_steps[0] || '';
-    var cut = s.indexOf(' Cost:');
-    if (cut > 0) s = s.slice(0, cut);
-    return s.length > 110 ? s.slice(0, 107) + '…' : s;
-  }
-
-  function detailRow(r) {
-    var m = r.model;
-    var steps = r.farm_steps.map(function (s) {
-      var cut = s.indexOf(' Cost:');
-      var action = cut > 0 ? s.slice(0, cut) : s;
-      var meta = cut > 0 ? s.slice(cut + 1) : '';
-      return '<li>' + esc(action) + (meta ? '<br><span class="meta">' + esc(meta) + '</span>' : '') + '</li>';
-    }).join('');
-    return '<tr class="detail"><td colspan="9"><div class="detail-grid"><div>' +
-      '<h3>Why ' + money(r.implied_value_usd) + ' — the model, step by step</h3>' +
-      '<table class="breakdown"><tbody>' +
-      bd('TVL', money(r.tvl_usd)) +
-      bd('Category comp (' + (m.comp_source === 'category' ? 'category median' : m.comp_source === 'blended' ? 'category median shrunk to market' : 'market median') + ', n=' + m.comp_sample + ')', m.comp_multiple.toFixed(3) + '×') +
-      bd('Growth (7d ' + pct(m.growth_pct) + ')', '×' + m.growth_multiplier.toFixed(3)) +
-      bd('Maturity (' + ageLabel(m.age_days) + ' with no token)', '×' + m.maturity_multiplier.toFixed(3)) +
-      bd('Breadth (' + r.chains.length + ' chain' + (r.chains.length === 1 ? '' : 's') + ')', '×' + m.breadth_multiplier.toFixed(3)) +
-      bd('<strong>Implied value</strong>', '<strong>' + money(r.implied_value_usd) + '</strong>') +
-      '</tbody></table>' +
-      '<div class="chips">' + r.chains.map(function (c) { return '<span class="chip">' + esc(c) + '</span>'; }).join('') +
-      '<span class="chip">Listed ' + esc(r.listed_at || 'unknown') + '</span>' +
-      '<span class="chip">' + (r.on_watchlist ? 'On the $50M watchlist' : 'Below the watchlist floor') + '</span></div>' +
-      '</div><div><h3>Farm plan — before and after a launch</h3>' +
-      '<ol class="steps">' + steps + '</ol></div></div></td></tr>';
-  }
-  function bd(label, value) { return '<tr><td>' + label + '</td><td>' + value + '</td></tr>'; }
-
-  tbody.addEventListener('click', function (e) {
-    var tr = e.target.closest('tr.row');
-    if (!tr) return;
-    var slug = tr.getAttribute('data-slug');
-    state.open = state.open === slug ? null : slug;
-    render();
-    if (state.open) {
-      var row = tbody.querySelector('tr[data-slug="' + state.open + '"]');
-      if (row) row.scrollIntoView({ block: 'nearest' });
+  sortSelect.addEventListener('change', () => {
+    const key = sortSelect.value;
+    if (key === 'name') { sortBy('name', 'ascending'); return; }
+    if (key === 'age') {
+      const rows = [...tbody.rows];
+      rows.sort((a, b) => (bySlug.get(b.dataset.slug).age_days ?? -1) - (bySlug.get(a.dataset.slug).age_days ?? -1));
+      for (const row of rows) tbody.appendChild(row);
+      for (const th of table.tHead.rows[0].cells) th.removeAttribute('aria-sort');
+      status.textContent = 'Sorted by age, descending, ' + rows.length + ' rows';
+      return;
     }
+    sortBy(key, 'descending');
   });
 
-  function markSorted() {
-    var ths = $('board').querySelectorAll('thead th[data-sort]');
-    ths.forEach(function (th) {
-      th.classList.toggle('sorted', th.getAttribute('data-sort') === state.sort ||
-        (state.sort === 'implied' && th.getAttribute('data-sort') === 'implied'));
-    });
+  /* ---- filters: hide rows, never rebuild them ---- */
+
+  const qInput = $('q');
+  const categorySelect = $('category');
+  const chainSelect = $('chain');
+  const verdictSelect = $('verdict');
+  const watchlistOnly = $('watchlist-only');
+
+  const categories = [...new Set(R.rows.map((r) => r.category).filter(Boolean))].sort(collator.compare);
+  const chains = [...new Set(R.rows.flatMap((r) => r.chains))].sort(collator.compare);
+  categorySelect.innerHTML = '<option value="">All categories</option>' + categories.map((c) => '<option>' + esc(c) + '</option>').join('');
+  chainSelect.innerHTML = '<option value="">All chains</option>' + chains.map((c) => '<option>' + esc(c) + '</option>').join('');
+
+  function applyFilters() {
+    const q = qInput.value.trim().toLowerCase();
+    const cat = categorySelect.value;
+    const chain = chainSelect.value;
+    const verdict = verdictSelect.value;
+    const wl = watchlistOnly.checked;
+    let shown = 0;
+    for (const row of tbody.rows) {
+      const r = bySlug.get(row.dataset.slug);
+      const hit =
+        (!q || r.name.toLowerCase().includes(q) || r.slug.includes(q)) &&
+        (!cat || r.category === cat) &&
+        (!chain || r.chains.includes(chain)) &&
+        (!verdict || r.farm.verdict === verdict) &&
+        (!wl || r.on_watchlist);
+      row.hidden = !hit;
+      if (hit) shown++;
+    }
+    empty.hidden = shown > 0;
+    rowCount.textContent = '(' + shown + ' of ' + R.rows.length + ' shown)';
+    status.textContent = shown + ' of ' + R.rows.length + ' protocols match the filters';
   }
-  $('board').querySelector('thead').addEventListener('click', function (e) {
-    var th = e.target.closest('th[data-sort]');
-    if (!th) return;
-    state.sort = th.getAttribute('data-sort');
-    $('sort').value = ['implied', 'tvl', 'growth', 'age', 'name'].indexOf(state.sort) >= 0 ? state.sort : 'implied';
-    if ($('sort').value !== state.sort) state.sort = $('sort').value;
-    render();
+
+  for (const el of [qInput, categorySelect, chainSelect, verdictSelect, watchlistOnly]) {
+    el.addEventListener(el === qInput ? 'input' : 'change', applyFilters);
+  }
+
+  $('reset').addEventListener('click', () => {
+    qInput.value = '';
+    categorySelect.value = '';
+    chainSelect.value = '';
+    verdictSelect.value = '';
+    watchlistOnly.checked = false;
+    sortSelect.value = 'implied';
+    sortBy('implied', 'descending');
+    applyFilters();
   });
 
-  /* ---------- controls ---------- */
-  $('q').addEventListener('input', function () { state.q = this.value; state.open = null; render(); });
-  $('category').addEventListener('change', function () { state.category = this.value; state.open = null; render(); });
-  $('chain').addEventListener('change', function () { state.chain = this.value; state.open = null; render(); });
-  $('watchlist-only').addEventListener('change', function () { state.watchlist = this.checked; state.open = null; render(); });
-  $('sort').addEventListener('change', function () { state.sort = this.value; render(); });
-  $('reset').addEventListener('click', function () {
-    state.q = ''; state.category = ''; state.chain = ''; state.watchlist = false; state.sort = 'implied'; state.open = null;
-    $('q').value = ''; $('category').value = ''; $('chain').value = ''; $('watchlist-only').checked = false; $('sort').value = 'implied';
-    render();
+  /* ---- detail view: a native dialog, deep-linkable with ?slug= ---- */
+
+  const dialog = $('detail');
+
+  function openDetail(slug) {
+    const r = bySlug.get(slug);
+    if (!r) return;
+    $('detail-title').textContent = '#' + r.rank + ' ' + r.name + (r.on_watchlist ? ' — on the $50M watchlist' : '');
+    $('detail-sub').textContent =
+      (r.category || 'Uncategorized') + ' · ' + (r.chains.join(', ') || 'no chain listed') +
+      ' · TVL ' + compact(r.tvl_usd) + ' · 7d ' + pct(r.change_7d) + ' · age ' + ageText(r.age_days) +
+      ' · rank range ' + r.rank_lo + '–' + r.rank_hi + ' over 200 bootstrap refits';
+    const m = r.model;
+    $('detail-model').innerHTML =
+      '<dt>Pricer (blind-test winner)</dt><dd>' + esc(R.validation.winner) + '</dd>' +
+      '<dt>Fitted base</dt><dd>' + money(m.base_usd) + '</dd>' +
+      '<dt>Pooled line</dt><dd>' + money(m.pooled_usd) + '</dd>' +
+      '<dt>Line + category offset</dt><dd>' + money(m.offset_usd) + ' <small>(' + (m.category_offset_dex >= 0 ? '+' : '') + m.category_offset_dex.toFixed(3) + ' dex, ' + m.comp_sample + ' comps)</small></dd>' +
+      '<dt>Growth ×</dt><dd>' + m.growth_multiplier.toFixed(3) + '</dd>' +
+      '<dt>Maturity ×</dt><dd>' + m.maturity_multiplier.toFixed(3) + '</dd>' +
+      '<dt>Breadth ×</dt><dd>' + m.breadth_multiplier.toFixed(3) + '</dd>' +
+      '<dt>Implied value</dt><dd><strong>' + money(r.implied_value_usd) + '</strong></dd>';
+    const f = r.farm;
+    $('detail-farm').innerHTML =
+      '<dt>Deposit</dt><dd>' + money(f.deposit_usd) + '</dd>' +
+      '<dt>Expected claim</dt><dd>' + money(f.expected_claim_usd) + ' <small>(10% of implied value, over farmer deposits at 5% of TVL)</small></dd>' +
+      '<dt>Gas</dt><dd>' + money(f.gas_usd) + '</dd>' +
+      '<dt>Opportunity cost</dt><dd>' + money(f.opportunity_usd) + ' <small>(5% a year over ' + f.hold_days + ' days)</small></dd>' +
+      '<dt>Net</dt><dd><strong>' + (f.net_usd < 0 ? '−' : '') + money(Math.abs(f.net_usd)) + '</strong> <span class="badge ' + f.verdict + '">' + f.verdict + '</span></dd>' +
+      '<dt>Hold</dt><dd>' + f.hold_days + ' days</dd>';
+    $('detail-steps').innerHTML = r.farm_steps.map((s) => '<li>' + esc(s) + '</li>').join('');
+    if (!dialog.open) dialog.showModal();
+  }
+
+  tbody.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-detail]');
+    if (button) openDetail(button.dataset.detail);
   });
 
-  render();
+  dialog.addEventListener('close', () => { dialog.returnValue = ''; });
+
+  /* ---- URL state, so a filtered view and a detail view are linkable ---- */
+
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('q')) qInput.value = params.get('q');
+  if (params.get('category')) categorySelect.value = params.get('category');
+  if (params.get('chain')) chainSelect.value = params.get('chain');
+  if (params.get('verdict')) verdictSelect.value = params.get('verdict');
+  if (params.get('watchlist') === '1') watchlistOnly.checked = true;
+  if (params.get('sort') && ['implied', 'net', 'tvl', 'growth', 'age', 'name'].includes(params.get('sort'))) {
+    sortSelect.value = params.get('sort');
+    sortSelect.dispatchEvent(new Event('change'));
+  }
+  applyFilters();
+  if (params.get('slug')) openDetail(params.get('slug'));
 })();

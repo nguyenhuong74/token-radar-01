@@ -1,11 +1,14 @@
-// Token Radar: the entrypoint (Node 22, standard library only).
+// Token Radar v2: the entrypoint (Node 22, standard library only).
 //
-// Reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores every
-// pre-token protocol with the comps model in lib/model.ts, writes the ranked board to
-// /output/board.json and the dashboard's data to /output/data.js, copies this repository's
-// dashboard/ and screenshots/ into /output, and writes /output/dossier.json with the
-// vendored make.fun library. The dossier is written last: the scorer rebuilds it from the
-// same /output and compares bytes, so nothing may change after it.
+// Reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), prices every
+// pre-token protocol with the fitted, blind-tested model in lib/model.ts, writes the ranked
+// board to /output/board.json and the dashboard's data to /output/data.js, copies this
+// repository's dashboard/ and screenshots/ into /output, and writes /output/dossier.json
+// with the vendored make.fun library. The dossier is written last: the scorer rebuilds it
+// from the same /output and compares bytes, so nothing may change after it.
+//
+// The run is deterministic: the cross-validation folds are a hash of the slug and the
+// bootstrap refits draw from a seeded generator, so two runs write the same bytes.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
@@ -81,7 +84,10 @@ writeFileSync(
   buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: DASHBOARD_CAPS }),
 );
 
+const verdicts = radar.verdict_counts;
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live comps)\n` +
+    `token radar: fit log10(mcap) = ${radar.fit.alpha} + ${radar.fit.beta} x log10(TVL); blind test winner "${radar.validation.winner}" at x${radar.validation.winner_median_error_x} median error, ${radar.validation.winner_within_2x_pct}% within 2x\n` +
+    `token radar: farm verdicts FARM ${verdicts.FARM} / THIN ${verdicts.THIN} / SKIP ${verdicts.SKIP}\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (${dash.length} files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );

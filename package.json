@@ -1,0 +1,1 @@
+{"description":"Token launch radar: pre-token protocols ranked by a fitted, blind-tested implied value, each with a farm plan netted to the dollar.","license":"MIT","name":"token-radar-01","private":true,"scripts":{"build":"mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../kit-token-radar-01/token-radar-01-kit/input/snapshot.json"},"type":"module","version":"2.0.0"}
